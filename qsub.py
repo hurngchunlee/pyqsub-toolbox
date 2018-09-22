@@ -29,7 +29,7 @@ def _validateInput(func, *vargs):
     """ Validate input function and its input argument list for evaluation """
     _spect = _inspect.getargspec(func)
     if len(_spect.args) != len(vargs):
-        raise InputError('Number of arguments not matching the function: %s', func.__name__) 
+        raise InputError('Number of arguments not matching the function: %s' % repr(func)) 
     if len(vargs) > 1:
         for v in vargs:
             if len(v) != len(vargs[0]):
