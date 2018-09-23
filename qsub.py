@@ -6,6 +6,7 @@ import os.path
 import inspect
 import getpass
 import socket
+from string import Template
 
 _batchId = 0
 
@@ -37,16 +38,65 @@ def _dumpJobData(sessId, jobSeqId, *jobData):
     try:
         f = open(pathPkl, 'wb')
         _p.dump(jobData, f)
-    except e:
+    except Exception, e:
         raise e
     finally:
         if f:
             f.close()
     return jobName, pathPkl
 
-def _prepareJobScript():
+def _prepareJobScript(sesId, sesPathPkl, jobName, jobInputPkl, func):
     """ Prepare Torque job script """
-    return
+
+    jobOutputPkl = '%s.output' % jobInputPkl.rstrip('.input') 
+    jobScriptPath = '%s.py' % jobInputPkl.rstrip('.input')
+
+    jobParams = {
+        'SES_ID': sesId,
+        'SES_PATH_PKL': sesPathPkl,
+        'JOB_NAME': jobName,
+        'JOB_WDIR': os.getcwd(),
+        'JOB_INPUT_PKL': jobInputPkl,
+        'JOB_OUTPUT_PKL': jobOutputPkl,
+        'FUNC_NAME': func.__name__
+    }
+
+    s = Template('''#!/usr/local/env python
+#PBS -N ${JOB_NAME}
+#PBS -d ${JOB_WDIR} 
+import dill
+import sys
+
+ec = 0
+errmsg = ''
+out = None
+try:
+    dill.load_session(filename='${SES_PATH_PKL}')
+
+    with open('${JOB_INPUT_PKL}', 'rb') as f:
+        data = dill.load(f)
+        f.close()
+        out = ${FUNC_NAME}(*data)
+
+except Exception, e:
+    ec = 1
+    errmsg = 'Exception: %s', e
+    sys.stderr.write('Exception: %s\\n', e)
+
+with open('${JOB_OUTPUT_PKL}', 'wb') as f:
+    dill.dump({'out':out, 'ec': ec, 'errmsg': errmsg}, f)
+    f.close()
+''').substitute(**jobParams)
+
+    try:
+        f = open(jobScriptPath, 'w')
+        f.write(s)
+    except Exception, e:
+        raise e
+    finally:
+        f.close()
+
+    return jobScriptPath
 
 def _validateInput(func, *vargs):
     """ Validate input function and its input argument list for evaluation """
@@ -82,8 +132,9 @@ def cellfun(func, *vargs):
 def qsubfeval(func, *vargs, **kwargs):
     """ Run the feval via a job on the Torque cluster. """
     _validateInput(func, *vargs)
-    _sessId, _sessPathPkl = _dumpSession( None if 'name' not in kwargs.keys() else kwargs['name'] )
-    _jobName, _jobPathPkl = _dumpJobData(_sessId, 1, *vargs)
+    _sid, _sPathPkl = _dumpSession( None if 'name' not in kwargs.keys() else kwargs['name'] )
+    _jName, _jInputPkl = _dumpJobData(_sid, 1, *vargs)
+    _jScript = _prepareJobScript(_sid, _sPathPkl, _jName, _jInputPkl, func)
 
 def qsubcellfun(func, *vargs, **kwargs):
     """ Run the cellfun via distributed jobs on the Torque cluster. """
