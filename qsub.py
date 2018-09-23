@@ -61,7 +61,7 @@ def _prepareJobScript(sesId, sesPathPkl, jobName, jobInputPkl, func):
         'FUNC_NAME': func.__name__
     }
 
-    s = Template('''#!/usr/local/env python
+    s = Template('''#!/usr/bin/env python
 #PBS -N ${JOB_NAME}
 #PBS -d ${JOB_WDIR} 
 import dill
