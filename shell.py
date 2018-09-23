@@ -38,8 +38,12 @@ import os, re, tempfile, time, signal
 #logger = Ganga.Utility.logging.getLogger()
 #from Ganga.Utility.Config import getConfig
 
-from utils.Common import *
-logger = getMyLogger(__name__)
+#from utils.Common import *
+#logger = getMyLogger(__name__)
+
+import logging
+logging.basicConfig(format='[%(levelname)s:%(name)s] %(message)s', level=logging.ERROR)
+logger = logging.getLogger()
 
 class Shell:
 

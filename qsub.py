@@ -7,6 +7,7 @@ import inspect
 import getpass
 import socket
 from string import Template
+from shell import Shell
 
 _batchId = 0
 
