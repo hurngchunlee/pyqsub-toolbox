@@ -1,8 +1,13 @@
 #!/usr/bin/env python
 
-import dill as _p 
-import time as _t
-import inspect as _inspect
+import dill as _p
+import os
+import os.path
+import inspect
+import getpass
+import socket
+
+_batchId = 0
 
 class InputError(ValueError):
     """ Generic input error extending the system's ValueError class """
@@ -14,30 +19,59 @@ class InputError(ValueError):
     def __str__(self):
         return self.__repr__()
 
-def _dumpSession():
+def _dumpSession(namePrefix=None):
     """ Dump session variables to a pickle file """
-    sessId = 'sess-' % _t.time()
-    sessPath = path.join(os.getcwd(), sessId)
-    _p.dump_session(filename=sessPath)
-    return sessPath
+    sessId = ''
+    if namePrefix:
+        sessId = '%s_%s_b%d' % (namePrefix, os.getpid(), _batchId)
+    else:
+        sessId = '%s_%s_%s_b%d' % (getpass.getuser(), socket.gethostname(), os.getpid(), _batchId)
+    pathPkl = os.path.join(os.getcwd(), '%s.pkl' % sessId)
+    _p.dump_session(filename=pathPkl)
+    return sessId, pathPkl
 
-def _prepareJobs():
-    """ Prepare Torque job content """
+def _dumpJobData(sessId, jobSeqId, *jobData):
+    """ Dump job data to a pickle file """
+    jobName = '%s_j%d' % (sessId, jobSeqId)
+    pathPkl = os.path.join(os.getcwd(), '%s.input' % jobName)
+    try:
+        f = open(pathPkl, 'wb')
+        _p.dump(jobData, f)
+    except e:
+        raise e
+    finally:
+        if f:
+            f.close()
+    return jobName, pathPkl
+
+def _prepareJobScript():
+    """ Prepare Torque job script """
     return
 
 def _validateInput(func, *vargs):
     """ Validate input function and its input argument list for evaluation """
-    _spect = _inspect.getargspec(func)
+    _spect = inspect.getargspec(func)
     if len(_spect.args) != len(vargs):
         raise InputError('Number of arguments not matching the function: %s' % repr(func)) 
-    if len(vargs) > 1:
+    if len(vargs) > 1 and type(vargs[0]) is type([]):
         for v in vargs:
             if len(v) != len(vargs[0]):
                 raise InputError("Unequal size between arguments for the evaluation.")
     return True
 
 def feval(func, *vargs):
-    """ Simular to MATLAB's feval function. """
+    """
+    feval evaluates function with a given list of arguments.
+    It is equivalent to MATLAB's feval function.
+    """
+    _validateInput(func, *vargs)
+    return func(*vargs)
+
+def cellfun(func, *vargs):
+    """
+    cellfun applies function to each element in the vargs array.
+    It is equivalent to MATLAB's cellfun function.
+    """
     _validateInput(func, *vargs)
     out = []
     for i in xrange(len(vargs[0])):
@@ -46,7 +80,13 @@ def feval(func, *vargs):
     return out
 
 def qsubfeval(func, *vargs, **kwargs):
-    """ Run the feval via distributed jobs on the Torque cluster. """
+    """ Run the feval via a job on the Torque cluster. """
+    _validateInput(func, *vargs)
+    _sessId, _sessPathPkl = _dumpSession( None if 'name' not in kwargs.keys() else kwargs['name'] )
+    _jobName, _jobPathPkl = _dumpJobData(_sessId, 1, *vargs)
+
+def qsubcellfun(func, *vargs, **kwargs):
+    """ Run the cellfun via distributed jobs on the Torque cluster. """
     _validateInput(func, *vargs)
 
     # TODO: dump session variables
