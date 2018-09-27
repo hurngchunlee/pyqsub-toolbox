@@ -1,11 +1,12 @@
 #!/usr/bin/env python
 
-import dill as _p
+import dill as pickle
 import os
 import os.path
 import inspect
 import getpass
 import socket
+import stat
 from string import Template
 from shell import Shell
 
@@ -29,7 +30,7 @@ def _dumpSession(namePrefix=None):
     else:
         sessId = '%s_%s_%s_b%d' % (getpass.getuser(), socket.gethostname(), os.getpid(), _batchId)
     pathPkl = os.path.join(os.getcwd(), '%s.pkl' % sessId)
-    _p.dump_session(filename=pathPkl)
+    pickle.dump_session(filename=pathPkl)
     return sessId, pathPkl
 
 def _dumpJobData(sessId, jobSeqId, *jobData):
@@ -38,7 +39,7 @@ def _dumpJobData(sessId, jobSeqId, *jobData):
     pathPkl = os.path.join(os.getcwd(), '%s.input' % jobName)
     try:
         f = open(pathPkl, 'wb')
-        _p.dump(jobData, f)
+        pickle.dump(jobData, f)
     except Exception, e:
         raise e
     finally:
@@ -100,6 +101,8 @@ with open('${JOB_OUTPUT_PKL}', 'wb') as f:
     finally:
         f.close()
 
+    os.chmod(jobScriptPath, stat.S_IXUSR | stat.S_IRUSR | stat.S_IWUSR)
+
     return jobParams
 
 def _validateInput(func, *vargs):
@@ -112,6 +115,14 @@ def _validateInput(func, *vargs):
             if len(v) != len(vargs[0]):
                 raise InputError("Unequal size between arguments for the evaluation.")
     return True
+
+def qstat(jid):
+    """ Check job status """
+    s = Shell()
+    rc, out, m = s.cmd1("qstat %s | grep %s | awk '{print $5}'" % (jid, jid))
+    if rc != 0:
+        return None
+    return out.strip('\n')
 
 def feval(func, *vargs):
     """
@@ -135,6 +146,8 @@ def cellfun(func, *vargs):
 
 def qsubfeval(func, *vargs, **kwargs):
     """ Run the feval via a job on the Torque cluster. """
+    
+    global _batchId
 
     out = {
         'job': {'name': None, 'outputPkl': None, 'jid': None}
@@ -151,19 +164,40 @@ def qsubfeval(func, *vargs, **kwargs):
 
     _req = ','.join( map(lambda k:"%s=%s" % (k, kwargs['req'][k]), kwargs['req'].keys()) )
 
-    _cmd = 'qsub -l "%s" %s' % (_req, _jobParams['JOB_SCRIPT_PATH'])
+    _cmd = 'echo "cd %s; which python; python %s; rm -f %s" | qsub -N %s -l "%s"' % (os.getcwd(), _jobParams['JOB_SCRIPT_PATH'], _jobParams['JOB_SCRIPT_PATH'], _jobParams['JOB_NAME'], _req)
 
     # returned values is a tuple of (rc, out, m) where
     # - rc: the command-line exit code
     # - out: the command-line output after execution
     # - m: the shell message involking the command
     rc, out, m = _s.cmd1(_cmd,timeout=5)
+    _batchId += 1
 
     if rc != 0:
         return None
 
-    _jobParams['JOB_ID'] = out
+    _jobParams['JOB_ID'] = out.strip('\n')
     return _jobParams
+
+def qsubget(jobParams,removeOut=True):
+    """ Get output of job """
+    out = None
+    s = qstat(jobParams['JOB_ID'])
+    if s == 'C' and os.path.exists(jobParams['JOB_OUTPUT_PKL']):
+        with open(jobParams['JOB_OUTPUT_PKL']) as f:
+            out = pickle.load(f)
+            print out
+            f.close()
+        if removeOut:
+            os.remove(jobParams['JOB_OUTPUT_PKL'])
+            # also remove the .e and .o files
+            ofile = '%s.o%s' % (jobParams['JOB_NAME'], jobParams['JOB_ID'].split('.')[0])
+            efile = '%s.e%s' % (jobParams['JOB_NAME'], jobParams['JOB_ID'].split('.')[0])
+            if os.path.exists(ofile):
+                os.remove(ofile)
+            if os.path.exists(efile):
+                os.remove(efile)
+    return out
 
 def qsubcellfun(func, *vargs, **kwargs):
     """ Run the cellfun via distributed jobs on the Torque cluster. """
