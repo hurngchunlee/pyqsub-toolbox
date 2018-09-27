@@ -59,14 +59,16 @@ def _prepareJobScript(sesId, sesPathPkl, jobName, jobInputPkl, func):
         'JOB_WDIR': os.getcwd(),
         'JOB_INPUT_PKL': jobInputPkl,
         'JOB_OUTPUT_PKL': jobOutputPkl,
+        'JOB_SCRIPT_PATH': jobScriptPath,
         'FUNC_NAME': func.__name__
     }
 
     s = Template('''#!/usr/bin/env python
 #PBS -N ${JOB_NAME}
-#PBS -d ${JOB_WDIR} 
+#PBS -d ${JOB_WDIR}
 import dill
 import sys
+import os
 
 ec = 0
 errmsg = ''
@@ -77,6 +79,7 @@ try:
     with open('${JOB_INPUT_PKL}', 'rb') as f:
         data = dill.load(f)
         f.close()
+        os.remove('${JOB_INPUT_PKL}')
         out = ${FUNC_NAME}(*data)
 
 except Exception, e:
@@ -97,7 +100,7 @@ with open('${JOB_OUTPUT_PKL}', 'wb') as f:
     finally:
         f.close()
 
-    return jobScriptPath
+    return jobParams
 
 def _validateInput(func, *vargs):
     """ Validate input function and its input argument list for evaluation """
@@ -132,10 +135,35 @@ def cellfun(func, *vargs):
 
 def qsubfeval(func, *vargs, **kwargs):
     """ Run the feval via a job on the Torque cluster. """
+
+    out = {
+        'job': {'name': None, 'outputPkl': None, 'jid': None}
+    }
+
     _validateInput(func, *vargs)
     _sid, _sPathPkl = _dumpSession( None if 'name' not in kwargs.keys() else kwargs['name'] )
     _jName, _jInputPkl = _dumpJobData(_sid, 1, *vargs)
-    _jScript = _prepareJobScript(_sid, _sPathPkl, _jName, _jInputPkl, func)
+    _jobParams = _prepareJobScript(_sid, _sPathPkl, _jName, _jInputPkl, func)
+    _s = Shell()
+
+    if 'req' not in kwargs.keys():
+        kwargs['req'] = {'walltime':'00:10:00', 'mem':'1gb'}
+
+    _req = ','.join( map(lambda k:"%s=%s" % (k, kwargs['req'][k]), kwargs['req'].keys()) )
+
+    _cmd = 'qsub -l "%s" %s' % (_req, _jobParams['JOB_SCRIPT_PATH'])
+
+    # returned values is a tuple of (rc, out, m) where
+    # - rc: the command-line exit code
+    # - out: the command-line output after execution
+    # - m: the shell message involking the command
+    rc, out, m = _s.cmd1(_cmd,timeout=5)
+
+    if rc != 0:
+        return None
+
+    _jobParams['JOB_ID'] = out
+    return _jobParams
 
 def qsubcellfun(func, *vargs, **kwargs):
     """ Run the cellfun via distributed jobs on the Torque cluster. """
